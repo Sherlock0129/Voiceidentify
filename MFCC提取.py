@@ -1,68 +1,113 @@
+import os
 import librosa
 import numpy as np
+from scipy.fftpack import dct
 from sklearn.svm import SVC
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
-
 # =================================================================
 # 1. MFCC特征提取（按论文参数实现）
 # =================================================================
+# =================================================================
+# 1. 修复MFCC提取和归一化
+# =================================================================
 def extract_mfcc_manual(audio_path, n_mfcc=22, frame_length=25, frame_shift=10, n_fft=512, n_mels=40):
-    """
-    按论文参数提取22阶MFCC
-    :param audio_path: 音频路径
-    :param n_mfcc: MFCC阶数（论文中为22）
-    :param frame_length: 帧长（ms）
-    :param frame_shift: 帧移（ms）
-    :param n_fft: FFT点数
-    :param n_mels: Mel滤波器数量
-    :return: MFCC特征矩阵 (n_mfcc, T)
-    """
-    # 加载音频
-    y, sr = librosa.load(audio_path, sr=8000)  # 论文中使用8kHz采样率
+    """提取MFCC并展平为1D特征向量"""
+    y, sr = librosa.load(audio_path, sr=8000)
 
-    # 1. 预加重（Pre-emphasis）
+    # 预加重
     pre_emphasis = 0.97
     y = np.append(y[0], y[1:] - pre_emphasis * y[:-1])
 
-    # 2. 分帧（Framing）
+    # 分帧和加窗
     frame_length_samples = int(sr * frame_length / 1000)
     frame_shift_samples = int(sr * frame_shift / 1000)
     frames = librosa.util.frame(y, frame_length=frame_length_samples, hop_length=frame_shift_samples)
-
-    # 3. 加汉明窗（Hamming Window）
+    frames = frames.copy()
     frames *= np.hamming(frame_length_samples).reshape(-1, 1)
 
-    # 4. 傅里叶变换（DFT）
+    # 傅里叶变换和Mel滤波器组
     mag_spec = np.abs(np.fft.rfft(frames, n=n_fft, axis=0))
-
-    # 5. Mel滤波器组（Mel Filter Bank）
     mel_basis = librosa.filters.mel(sr=sr, n_fft=n_fft, n_mels=n_mels)
     mel_energy = np.dot(mel_basis, mag_spec)
 
-    # 6. 对数能量
+    # 对数能量和DCT
     log_mel_energy = np.log(mel_energy + 1e-6)
+    mfcc = dct(log_mel_energy, axis=0, norm='ortho')[:n_mfcc]
 
-    # 7. DCT（离散余弦变换）
-    mfcc = librosa.util.dct(log_mel_energy, axis=0, norm='ortho')[:n_mfcc]
-
-    return mfcc
+    # 展平为1D向量（时间轴取均值）
+    return np.mean(mfcc, axis=1)  # 形状变为 (n_mfcc,)
 
 # =================================================================
 # 2. 特征归一化（按论文方法）
 # =================================================================
-def normalize_features(features):
+def normalize_features(X):
     """
     归一化：每列减去均值，除以最大值
     :param features: (n_samples, n_features)
     :return: 归一化后的特征
     """
+    """安全归一化（避免除以零）"""
+    X = X.astype(np.float64)
     # 减去均值
-    features -= np.mean(features, axis=0)
-    # 除以最大值
-    features /= np.max(np.abs(features), axis=0)
-    return features
+    X -= np.mean(X, axis=0)
+    # 计算每列的最大绝对值，避免零
+    max_vals = np.max(np.abs(X), axis=0)
+    max_vals[max_vals == 0] = 1.0  # 将零替换为1
+    X /= max_vals
+    return X
+
+# =================================================================
+# 2. 加载数据集并修复维度问题
+# =================================================================
+def load_dataset(dataset_dir):
+    X, y = [], []
+    for speaker in os.listdir(dataset_dir):
+        speaker_dir = os.path.join(dataset_dir, speaker)
+        if not os.path.isdir(speaker_dir):
+            print(f"跳过非说话人目录: {speaker_dir}")
+            continue
+
+        print(f"处理说话人: {speaker}")
+
+        # 遍历场景（Scene）文件夹
+        for scene in os.listdir(speaker_dir):
+            scene_dir = os.path.join(speaker_dir, scene)
+            if not os.path.isdir(scene_dir):
+                print(f"跳过非场景目录: {scene_dir}")
+                continue
+
+            print(f"  处理场景: {scene}")
+
+            # 遍历场景中的FLAC文件
+            for file in os.listdir(scene_dir):
+                if not file.endswith(".flac"):
+                    print(f"    跳过非FLAC文件: {file}")
+                    continue
+
+                flac_path = os.path.join(scene_dir, file)
+                try:
+                    mfcc = extract_mfcc_manual(flac_path)
+                    if mfcc is not None:
+                        X.append(mfcc)
+                        y.append(speaker)
+                        print(f"    成功加载: {file}")
+                    else:
+                        print(f"    特征提取失败: {file}")
+                except Exception as e:
+                    print(f"    加载失败: {file}, 错误: {e}")
+
+    if len(X) == 0:
+        raise ValueError("未找到有效数据！请检查：\n"
+                         "1. 数据集路径是否正确\n"
+                         "2. 文件是否为FLAC格式\n"
+                         "3. 目录结构是否为 speaker/scene/files.flac")
+
+    X = np.array(X)
+    le = LabelEncoder()
+    y = le.fit_transform(y)
+    return X, y, le
 
 # =================================================================
 # 3. 训练SVM模型（使用ERBF核）
@@ -83,33 +128,20 @@ def train_svm(X_train, y_train):
 # 4. 主流程（模拟数据示例）
 # =================================================================
 if __name__ == "__main__":
-    # 假设已加载数据（需替换为实际数据，如Aurora-2）
-    # 示例：生成模拟数据（10个说话人，每人20个样本）
-    n_speakers = 10
-    n_samples_per_speaker = 20
-    X = []
-    y = []
+    dataset_dir = "./dev-clean/LibriSpeech/dev-clean"
+    X, y, le = load_dataset(dataset_dir)
+    print("特征矩阵形状:", X.shape)  # 应为 (n_samples, 22)
 
-    for spk_id in range(n_speakers):
-        for _ in range(n_samples_per_speaker):
-            # 模拟MFCC特征（22阶，100帧）
-            mfcc = np.random.randn(22, 100).flatten()  # 实际应从音频提取
-            X.append(mfcc)
-            y.append(spk_id)
-
-    X = np.array(X)
-    y = np.array(y)
-
-    # 特征归一化
+    # 归一化
     X = normalize_features(X)
 
-    # 划分训练集和测试集
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # 划分数据集
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y)
 
     # 训练SVM
-    model = train_svm(X_train, y_train)
+    model = SVC(kernel="rbf", C=10, gamma="scale")
+    model.fit(X_train, y_train)
 
     # 评估
     y_pred = model.predict(X_test)
-    print("Accuracy:", accuracy_score(y_test, y_pred))
-    print(classification_report(y_test, y_pred))
+    print("准确率:", accuracy_score(y_test, y_pred))
