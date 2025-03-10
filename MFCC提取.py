@@ -42,22 +42,25 @@ def extract_mfcc_manual(audio_path, n_mfcc=22, frame_length=25, frame_shift=10, 
 # =================================================================
 # 2. 特征归一化（按论文方法）
 # =================================================================
-def normalize_features(X):
-    """
-    归一化：每列减去均值，除以最大值
-    :param features: (n_samples, n_features)
-    :return: 归一化后的特征
-    """
-    """安全归一化（避免除以零）"""
-    X = X.astype(np.float64)
+def normalize_train_features(X_train_raw):
+    """训练集归一化：计算均值和最大值，并返回归一化后的特征及参数"""
     # 减去均值
-    X -= np.mean(X, axis=0)
-    # 计算每列的最大绝对值，避免零
-    max_vals = np.max(np.abs(X), axis=0)
-    max_vals[max_vals == 0] = 1.0  # 将零替换为1
-    X /= max_vals
-    return X
+    mean_train = np.mean(X_train_raw, axis=0)
+    X_train = X_train_raw - mean_train
 
+    # 计算最大绝对值（避免零）
+    max_vals_train = np.max(np.abs(X_train), axis=0)
+    max_vals_train[max_vals_train == 0] = 1.0  # 防止除以零
+
+    # 归一化
+    X_train_normalized = X_train / max_vals_train
+    return X_train_normalized, mean_train, max_vals_train
+
+def normalize_test_features(X_test_raw, mean_train, max_vals_train):
+    """测试集归一化：使用训练集的均值和最大值"""
+    X_test = X_test_raw - mean_train
+    X_test_normalized = X_test / max_vals_train
+    return X_test_normalized
 # =================================================================
 # 2. 加载数据集并修复维度问题
 # =================================================================
@@ -128,20 +131,49 @@ def train_svm(X_train, y_train):
 # 4. 主流程（模拟数据示例）
 # =================================================================
 if __name__ == "__main__":
-    dataset_dir = "./dev-clean/LibriSpeech/dev-clean"
-    X, y, le = load_dataset(dataset_dir)
-    print("特征矩阵形状:", X.shape)  # 应为 (n_samples, 22)
+    dataset_dir_train = "./dev-clean/LibriSpeech/dev-clean"
+    X, y, le = load_dataset(dataset_dir_train)
+    print("特征矩阵形状:", X.shape)
 
-    # 归一化
-    X = normalize_features(X)
+    # 按说话人划分数据集
+    unique_speakers = np.unique(y)
+    # 随机选择70%的说话人作为训练集，30%作为测试集
+    train_speakers, test_speakers = train_test_split(
+        unique_speakers,
+        test_size=0.3,
+        random_state=42
+    )
+    # 创建训练和测试集的掩码
+    train_mask = np.isin(y, train_speakers)
+    test_mask = np.isin(y, test_speakers)
+    X_train_raw, y_train = X[train_mask], y[train_mask]
+    X_test_raw, y_test = X[test_mask], y[test_mask]
 
-    # 划分数据集
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y)
+    # 训练集归一化（计算参数）
+    X_train, mean_train, max_vals_train = normalize_train_features(X_train_raw)
 
-    # 训练SVM
+    # 测试集归一化（使用训练集的参数）
+    X_test = normalize_test_features(X_test_raw, mean_train, max_vals_train)
+
+    # 训练SVM模型
     model = SVC(kernel="rbf", C=10, gamma="scale")
     model.fit(X_train, y_train)
 
-    # 评估
+    # 评估模型
     y_pred = model.predict(X_test)
     print("准确率:", accuracy_score(y_test, y_pred))
+
+    # 检查预测结果分布
+    print("预测标签分布:", np.unique(y_pred, return_counts=True))
+    print("真实标签分布:", np.unique(y_test, return_counts=True))
+
+    # 生成分类报告（仅包含测试集中的说话人）
+    test_speaker_names = le.classes_[test_speakers]
+    print("\n分类报告:")
+    print(classification_report(
+        y_test,
+        y_pred,
+        labels=test_speakers,
+        target_names=test_speaker_names,
+        zero_division=0
+    ))
