@@ -12,7 +12,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import librosa.display
 import math
-
+import matplotlib
+matplotlib.use('TkAgg')  # 强制使用Tkinter后端
 # =================================================================
 # 1. MFCC 特征提取
 # =================================================================
