@@ -127,6 +127,15 @@ def train_svm(X_train, y_train):
 # =================================================================
 # 4. 主流程（模拟数据示例）
 # =================================================================
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    f1_score,
+    cohen_kappa_score,
+    matthews_corrcoef,
+    confusion_matrix,
+)
+
 if __name__ == "__main__":
     dataset_dir = "./dev-clean/LibriSpeech/dev-clean"
     X, y, le = load_dataset(dataset_dir)
@@ -138,10 +147,29 @@ if __name__ == "__main__":
     # 划分数据集
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y)
 
-    # 训练SVM
-    model = SVC(kernel="rbf", C=10, gamma="scale")
+    # 训练SVM（启用概率估计以支持Log Loss计算）
+    model = SVC(kernel="rbf", C=20, gamma="scale", probability=True)
     model.fit(X_train, y_train)
 
     # 评估
     y_pred = model.predict(X_test)
     print("准确率:", accuracy_score(y_test, y_pred))
+
+    # 分类报告（包含每类的Precision/Recall/F1）
+    print("\n分类报告:")
+    print(classification_report(y_test, y_pred, target_names=le.classes_))
+
+    # F1宏平均 & 加权平均
+    print("F1宏平均:", f1_score(y_test, y_pred, average='macro'))
+    print("F1加权平均:", f1_score(y_test, y_pred, average='weighted'))
+
+    # Cohen's Kappa（衡量标注一致性）
+    print("\nCohen's Kappa系数:", cohen_kappa_score(y_test, y_pred))
+
+    # Matthews相关系数（适用于不平衡数据）
+    print("Matthews相关系数 (MCC):", matthews_corrcoef(y_test, y_pred))
+
+    # 混淆矩阵（打印前5x5部分示例）
+    cm = confusion_matrix(y_test, y_pred)
+    print("\n混淆矩阵（前5类）:")
+    print(cm[:5, :5])  # 仅展示前5类避免输出过长
