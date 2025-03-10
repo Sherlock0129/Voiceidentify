@@ -6,7 +6,6 @@ from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
-
 # =================================================================
 # 1. MFCC特征提取（按论文参数实现）
 # =================================================================
@@ -14,68 +13,46 @@ from sklearn.metrics import accuracy_score, classification_report
 # 1. 修复MFCC提取和归一化
 # =================================================================
 def extract_mfcc_manual(audio_path, n_mfcc=22, frame_length=25, frame_shift=10, n_fft=512, n_mels=40):
-    """
-    按论文参数提取22阶MFCC
-    :param audio_path: 音频路径
-    :param n_mfcc: MFCC阶数（论文中为22）
-    :param frame_length: 帧长（ms）
-    :param frame_shift: 帧移（ms）
-    :param n_fft: FFT点数
-    :param n_mels: Mel滤波器数量
-    :return: MFCC特征矩阵 (n_mfcc, T)
-    """
-    # 加载音频
-    y, sr = librosa.load(audio_path, sr=8000)  # 论文中使用8kHz采样率
+    """提取MFCC并展平为1D特征向量"""
+    y, sr = librosa.load(audio_path, sr=8000)
 
-    # 1. 预加重（Pre-emphasis）
+    # 预加重
     pre_emphasis = 0.97
     y = np.append(y[0], y[1:] - pre_emphasis * y[:-1])
 
-    # 2. 分帧（Framing）
+    # 分帧和加窗
     frame_length_samples = int(sr * frame_length / 1000)
     frame_shift_samples = int(sr * frame_shift / 1000)
     frames = librosa.util.frame(y, frame_length=frame_length_samples, hop_length=frame_shift_samples)
-
-    # 3. 加汉明窗（Hamming Window）
+    frames = frames.copy()
     frames *= np.hamming(frame_length_samples).reshape(-1, 1)
 
-    # 4. 傅里叶变换（DFT）
+    # 傅里叶变换和Mel滤波器组
     mag_spec = np.abs(np.fft.rfft(frames, n=n_fft, axis=0))
-
-    # 5. Mel滤波器组（Mel Filter Bank）
     mel_basis = librosa.filters.mel(sr=sr, n_fft=n_fft, n_mels=n_mels)
     mel_energy = np.dot(mel_basis, mag_spec)
 
-    # 6. 对数能量
+    # 对数能量和DCT
     log_mel_energy = np.log(mel_energy + 1e-6)
+    mfcc = dct(log_mel_energy, axis=0, norm='ortho')[:n_mfcc]
 
-    # 7. DCT（离散余弦变换）
-    mfcc = librosa.util.dct(log_mel_energy, axis=0, norm='ortho')[:n_mfcc]
-
-    return mfcc
+    # 展平为1D向量（时间轴取均值）
+    return np.mean(mfcc, axis=1)  # 形状变为 (n_mfcc,)
 
 # =================================================================
 # 2. 特征归一化（按论文方法）
 # =================================================================
-def normalize_train_features(X_train_raw):
-    """训练集归一化：计算均值和最大值，并返回归一化后的特征及参数"""
+def normalize_features(features):
+    """
+    归一化：每列减去均值，除以最大值
+    :param features: (n_samples, n_features)
+    :return: 归一化后的特征
+    """
     # 减去均值
-    mean_train = np.mean(X_train_raw, axis=0)
-    X_train = X_train_raw - mean_train
-
-    # 计算最大绝对值（避免零）
-    max_vals_train = np.max(np.abs(X_train), axis=0)
-    max_vals_train[max_vals_train == 0] = 1.0  # 防止除以零
-
-    # 归一化
-    X_train_normalized = X_train / max_vals_train
-    return X_train_normalized, mean_train, max_vals_train
-
-def normalize_test_features(X_test_raw, mean_train, max_vals_train):
-    """测试集归一化：使用训练集的均值和最大值"""
-    X_test = X_test_raw - mean_train
-    X_test_normalized = X_test / max_vals_train
-    return X_test_normalized
+    features -= np.mean(features, axis=0)
+    # 除以最大值
+    features /= np.max(np.abs(features), axis=0)
+    return features
 # =================================================================
 # 2. 加载数据集并修复维度问题
 # =================================================================
@@ -126,7 +103,6 @@ def load_dataset(dataset_dir):
     le = LabelEncoder()
     y = le.fit_transform(y)
     return X, y, le
-
 # =================================================================
 # 3. 训练SVM模型（使用ERBF核）
 # =================================================================
@@ -150,35 +126,17 @@ if __name__ == "__main__":
     X, y, le = load_dataset(dataset_dir_train)
     print("特征矩阵形状:", X.shape)
 
-    X = np.array(X)
-    y = np.array(y)
-
-    # 特征归一化
+    # 归一化
     X = normalize_features(X)
 
-    # 划分训练集和测试集
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # 划分数据集
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y)
 
     # 训练SVM
-    model = train_svm(X_train, y_train)
+    model = SVC(kernel="rbf", C=10, gamma="scale")
+    model.fit(X_train, y_train)
 
     # 评估
     y_pred = model.predict(X_test)
     print("Accuracy:", accuracy_score(y_test, y_pred))
     print(classification_report(y_test, y_pred))
-    print("准确率:", accuracy_score(y_test, y_pred))
-
-    # 检查预测结果分布
-    print("预测标签分布:", np.unique(y_pred, return_counts=True))
-    print("真实标签分布:", np.unique(y_test, return_counts=True))
-
-    # 生成分类报告（仅包含测试集中的说话人）
-    test_speaker_names = le.classes_[test_speakers]
-    print("\n分类报告:")
-    print(classification_report(
-        y_test,
-        y_pred,
-        labels=test_speakers,
-        target_names=test_speaker_names,
-        zero_division=0
-    ))
