@@ -207,7 +207,7 @@ if __name__ == "__main__":
                                      os.listdir(os.path.join(dataset_dir, os.listdir(dataset_dir)[0]))[0],
                                      os.listdir(os.path.join(dataset_dir, os.listdir(dataset_dir)[0],
                                                              os.listdir(os.path.join(dataset_dir, os.listdir(dataset_dir)[0]))[0]))[0])
-    visualize_mel_spectrogram(sample_audio_path)
+    # visualize_mel_spectrogram(sample_audio_path)
     visualize_mfcc(sample_audio_path)
 
     # Normalize features and visualize distribution
@@ -216,7 +216,7 @@ if __name__ == "__main__":
     visualize_feature_distribution(X_before, X, feature_idx=0)
 
     # Split dataset
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, stratify=y)
 
     # Train SVM
     model = train_svm(X_train, y_train)
