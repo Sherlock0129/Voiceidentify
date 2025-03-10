@@ -3,6 +3,11 @@ import librosa
 import numpy as np
 import torch
 import torch.nn as nn
+# 检查CUDA是否可用
+print("CUDA可用:", torch.cuda.is_available())  # 预期输出 True
+print("GPU数量:", torch.cuda.device_count())   # 预期输出 ≥1
+print(torch.__version__)          # 查看 PyTorch 版本
+print(torch.cuda.is_available())  # 必须输出 True 才能用 GP
 import torch.nn.functional as F
 from scipy.fftpack import  dct
 from sklearn.preprocessing import LabelEncoder
@@ -264,7 +269,7 @@ class ECAPA_TDNN(nn.Module):
 # =================================================================
 def train_ecapa_tdnn(X_train, y_train, num_classes, epochs=10, batch_size=32):
     """训练 ECAPA-TDNN 模型"""
-    model = ECAPA_TDNN(C=1024, n_class=num_classes).cuda(1)
+    model = ECAPA_TDNN(C=1024, n_class=num_classes).cuda(0)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     losses = []
