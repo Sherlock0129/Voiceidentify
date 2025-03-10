@@ -244,6 +244,11 @@ if __name__ == "__main__":
     # 构建数据集
     X, y = build_dataset(dataset_dir, target_speaker)
     # y = np.array(y, dtype=np.float32)
+    print("y type:", type(y))
+    # print("y shape:", np.shape(y))  # 避免直接调用 y.shape 导致 AttributeError
+    print("y example:", y[:5])
+    y = np.array(y[0], dtype=np.int32)
+
     print(f"X_train shape: {X_train.shape}, dtype: {X_train.dtype}")
     print(f"y_train shape: {y_train.shape}, dtype: {y_train.dtype}")
     print(f"Example X_train: {X_train[:2]}")
