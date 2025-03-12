@@ -12,14 +12,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import librosa.display
 import math
-import matplotlib
 
 # 检查是否有可用的 GPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # =================================================================
-# 1. MFCC 特征提取
+# 1. MFCC 特征提取（保持不变）
 # =================================================================
 def extract_mfcc_manual(audio_path, n_mfcc=22, frame_length=25, frame_shift=10, n_fft=512, n_mels=40, return_full_mfcc=False):
     """提取 MFCC 特征，可选择返回完整矩阵或平均向量"""
@@ -40,7 +39,7 @@ def extract_mfcc_manual(audio_path, n_mfcc=22, frame_length=25, frame_shift=10, 
         return mfcc.T  # 返回形状 (时间帧数, n_mfcc)
     return np.mean(mfcc, axis=1)
 
-# MFCC 可视化
+# MFCC 可视化（保持不变）
 def visualize_mfcc(audio_path):
     """可视化音频文件的 MFCC 特征"""
     mfcc_full = extract_mfcc_manual(audio_path, return_full_mfcc=True)
@@ -53,7 +52,7 @@ def visualize_mfcc(audio_path):
     plt.tight_layout()
     plt.show()
 
-# Mel 频谱图可视化
+# Mel 频谱图可视化（保持不变）
 def visualize_mel_spectrogram(audio_path, frame_length=25, frame_shift=10, n_fft=512, n_mels=40):
     """可视化音频文件的 Mel 频谱图"""
     y, sr = librosa.load(audio_path, sr=8000)
@@ -78,7 +77,7 @@ def visualize_mel_spectrogram(audio_path, frame_length=25, frame_shift=10, n_fft
     plt.show()
 
 # =================================================================
-# 2. 特征归一化
+# 2. 特征归一化（保持不变）
 # =================================================================
 def normalize_features(X):
     """对特征进行归一化：减去均值并除以最大绝对值"""
@@ -89,7 +88,7 @@ def normalize_features(X):
     X /= max_vals
     return X
 
-# 特征分布可视化
+# 特征分布可视化（保持不变）
 def visualize_feature_distribution(X_before, X_after, feature_idx=0):
     """可视化特征归一化前后的分布"""
     plt.figure(figsize=(12, 5))
@@ -107,7 +106,7 @@ def visualize_feature_distribution(X_before, X_after, feature_idx=0):
     plt.show()
 
 # =================================================================
-# 3. 加载数据集并进行填充
+# 3. 加载数据集并进行填充（保持不变）
 # =================================================================
 def load_dataset(dataset_dir, max_frames=200):
     """加载数据集并提取完整 MFCC 特征，填充或截断至 max_frames"""
@@ -130,10 +129,8 @@ def load_dataset(dataset_dir, max_frames=200):
                     continue
                 flac_path = os.path.join(scene_dir, file)
                 try:
-                    # 提取完整 MFCC 矩阵
                     mfcc = extract_mfcc_manual(flac_path, return_full_mfcc=True)
                     if mfcc is not None:
-                        # 填充或截断至 max_frames
                         if mfcc.shape[0] < max_frames:
                             pad_width = max_frames - mfcc.shape[0]
                             mfcc = np.pad(mfcc, ((0, pad_width), (0, 0)), mode='constant')
@@ -148,13 +145,68 @@ def load_dataset(dataset_dir, max_frames=200):
                     print(f"    加载失败: {file}, 错误: {e}")
     if len(X) == 0:
         raise ValueError("未找到有效数据！请检查数据集路径、FLAC 格式和目录结构。")
-    X = np.array(X)  # 现在 X 的形状应为 (样本数, max_frames, n_mfcc)
+    X = np.array(X)  # 形状 (样本数, max_frames, n_mfcc)
     le = LabelEncoder()
     y = le.fit_transform(y)
     return X, y, le
 
 # =================================================================
-# 4. ECAPA-TDNN 模型定义
+# 4. Conformer 模块定义
+# =================================================================
+class ConformerBlock(nn.Module):
+    def __init__(self, dim, num_heads, ff_expansion_factor, conv_expansion_factor, dropout=0.1):
+        super(ConformerBlock, self).__init__()
+        self.ln1 = nn.LayerNorm(dim)
+        self.attn = nn.MultiheadAttention(dim, num_heads, dropout=dropout)
+        self.ln2 = nn.LayerNorm(dim)
+        self.ff = nn.Sequential(
+            nn.Linear(dim, dim * ff_expansion_factor),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim * ff_expansion_factor, dim),
+        )
+        self.ln3 = nn.LayerNorm(dim)
+        self.conv = nn.Sequential(
+            nn.Conv1d(dim, dim * conv_expansion_factor, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(dim * conv_expansion_factor, dim, kernel_size=3, padding=1),
+            nn.Dropout(dropout),
+        )
+        self.ln4 = nn.LayerNorm(dim)
+
+    def forward(self, x):
+        # x: (batch, time, dim)
+        residual = x
+        x = self.ln1(x)
+        attn_output, _ = self.attn(x, x, x)
+        x = residual + attn_output
+        residual = x
+        x = self.ln2(x)
+        x = residual + self.ff(x)
+        residual = x
+        x = self.ln3(x).permute(0, 2, 1)  # (batch, dim, time)
+        x = self.conv(x).permute(0, 2, 1)  # (batch, time, dim)
+        x = self.ln4(x + residual)
+        return x
+
+class Conformer(nn.Module):
+    def __init__(self, input_dim, num_layers, dim, num_heads, ff_expansion_factor, conv_expansion_factor, dropout=0.1):
+        super(Conformer, self).__init__()
+        self.embedding = nn.Linear(input_dim, dim)  # 将 n_mfcc 映射到 dim
+        self.conformer_blocks = nn.ModuleList([
+            ConformerBlock(dim, num_heads, ff_expansion_factor, conv_expansion_factor, dropout)
+            for _ in range(num_layers)
+        ])
+
+    def forward(self, x):
+        # x: (batch, time, n_mfcc)
+        x = self.embedding(x)  # (batch, time, dim)
+        for block in self.conformer_blocks:
+            x = block(x)
+        return x  # (batch, time, dim)
+
+# =================================================================
+# 5. ECAPA-TDNN 模块定义（保持不变）
 # =================================================================
 class SEModule(nn.Module):
     def __init__(self, channels, bottleneck=128):
@@ -219,9 +271,9 @@ class Bottle2neck(nn.Module):
         return out
 
 class ECAPA_TDNN(nn.Module):
-    def __init__(self, C=1024, n_class=40):  # 根据数据集调整 n_class
+    def __init__(self, C=1024, n_class=40):
         super(ECAPA_TDNN, self).__init__()
-        self.conv1 = nn.Conv1d(22, C, kernel_size=5, stride=1, padding=2)  # 输入通道数 = n_mfcc
+        self.conv1 = nn.Conv1d(256, C, kernel_size=5, stride=1, padding=2)  # 输入通道改为 Conformer 的输出 dim
         self.relu = nn.ReLU()
         self.bn1 = nn.BatchNorm1d(C)
         self.layer1 = Bottle2neck(C, C, kernel_size=3, dilation=2, scale=8)
@@ -239,9 +291,10 @@ class ECAPA_TDNN(nn.Module):
         self.bn5 = nn.BatchNorm1d(3072)
         self.fc6 = nn.Linear(3072, 192)
         self.bn6 = nn.BatchNorm1d(192)
-        self.fc_out = nn.Linear(192, n_class)  # 分类输出层
+        self.fc_out = nn.Linear(192, n_class)
 
     def forward(self, x):
+        # x: (batch, dim, time)
         x = self.conv1(x)
         x = self.relu(x)
         x = self.bn1(x)
@@ -264,11 +317,26 @@ class ECAPA_TDNN(nn.Module):
         return x
 
 # =================================================================
-# 5. 训练 ECAPA-TDNN 模型
+# 6. 结合 Conformer 和 ECAPA-TDNN 的模型
 # =================================================================
-def train_ecapa_tdnn(X_train, y_train, num_classes, epochs=10, batch_size=32):
-    """训练 ECAPA-TDNN 模型"""
-    model = ECAPA_TDNN(C=1024, n_class=num_classes).to(device)  # 使用动态设备
+class Conformer_ECAPA_TDNN(nn.Module):
+    def __init__(self, input_dim, num_classes, conformer_layers=3, dim=256, num_heads=4, ff_expansion_factor=4, conv_expansion_factor=2, dropout=0.1, C=1024):
+        super(Conformer_ECAPA_TDNN, self).__init__()
+        self.conformer = Conformer(input_dim, conformer_layers, dim, num_heads, ff_expansion_factor, conv_expansion_factor, dropout)
+        self.ecapa_tdnn = ECAPA_TDNN(C=C, n_class=num_classes)
+
+    def forward(self, x):
+        # x: (batch, time, n_mfcc)
+        x = self.conformer(x)  # (batch, time, dim)
+        x = x.permute(0, 2, 1)  # (batch, dim, time)
+        x = self.ecapa_tdnn(x)  # (batch, num_classes)
+        return x
+
+# =================================================================
+# 7. 训练模型
+# =================================================================
+def train_model(model, X_train, y_train, epochs=10, batch_size=32):
+    """训练模型"""
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     losses = []
@@ -280,10 +348,10 @@ def train_ecapa_tdnn(X_train, y_train, num_classes, epochs=10, batch_size=32):
         for i in range(0, len(X_train), batch_size):
             batch_indices = indices[i:i + batch_size]
             if len(batch_indices) < batch_size:
-                continue  # 跳过不完整的批次
+                continue
             batch_X = X_train[batch_indices]
             batch_y = y_train[batch_indices]
-            batch_X = torch.tensor(batch_X, dtype=torch.float32).to(device).permute(0, 2, 1)  # [batch, n_mfcc, time]
+            batch_X = torch.tensor(batch_X, dtype=torch.float32).to(device)  # (batch, time, n_mfcc)
             batch_y = torch.tensor(batch_y, dtype=torch.long).to(device)
             optimizer.zero_grad()
             outputs = model(batch_X)
@@ -293,9 +361,8 @@ def train_ecapa_tdnn(X_train, y_train, num_classes, epochs=10, batch_size=32):
             running_loss += loss.item()
         epoch_loss = running_loss / (len(X_train) // batch_size)
         losses.append(epoch_loss)
-        print(f'第 {epoch + 1}/{epochs} 轮, 损失: {epoch_loss:.6f}')
+        print(f'第 {epoch + 1}/{epochs} 轮, 损失: {epoch_loss:.4f}')
 
-    # 绘制训练损失曲线
     plt.figure(figsize=(10, 5))
     plt.plot(range(1, epochs + 1), losses, marker='o', color='blue')
     plt.title('训练损失随轮次变化', fontsize=14)
@@ -307,7 +374,7 @@ def train_ecapa_tdnn(X_train, y_train, num_classes, epochs=10, batch_size=32):
 
     return model
 
-# 每类准确率可视化
+# 每类准确率可视化（保持不变）
 def visualize_per_class_accuracy(y_test, y_pred, le):
     """以条形图形式可视化每类的准确率"""
     cm = confusion_matrix(y_test, y_pred)
@@ -326,17 +393,17 @@ def visualize_per_class_accuracy(y_test, y_pred, le):
     plt.show()
 
 # =================================================================
-# 6. 主流程与可视化
+# 8. 主流程与可视化
 # =================================================================
 if __name__ == "__main__":
     dataset_dir = "./dev-clean/LibriSpeech/dev-clean"
-    max_frames = 200  # 设置固定的帧数用于填充
+    max_frames = 200
 
-    # 加载数据集并进行填充
+    # 加载数据集
     X, y, le = load_dataset(dataset_dir, max_frames=max_frames)
     print("特征矩阵形状 (样本数, 时间帧数, n_mfcc):", X.shape)
 
-    # 可视化示例音频的 Mel 频谱图和 MFCC
+    # 可视化示例音频
     sample_audio_path = os.path.join(dataset_dir, os.listdir(dataset_dir)[0],
                                      os.listdir(os.path.join(dataset_dir, os.listdir(dataset_dir)[0]))[0],
                                      os.listdir(os.path.join(dataset_dir, os.listdir(dataset_dir)[0],
@@ -344,23 +411,22 @@ if __name__ == "__main__":
     visualize_mel_spectrogram(sample_audio_path)
     visualize_mfcc(sample_audio_path)
 
-    # 逐样本归一化特征
+    # 特征归一化
     X_normalized = np.array([normalize_features(x) for x in X])
-
-    # 可视化第一个样本的第一个特征的分布
     visualize_feature_distribution(X[0], X_normalized[0], feature_idx=0)
 
     # 划分数据集
     X_train, X_test, y_train, y_test = train_test_split(X_normalized, y, test_size=0.3, stratify=y)
 
-    # 训练 ECAPA-TDNN
+    # 初始化并训练模型
     num_classes = len(np.unique(y))
-    model = train_ecapa_tdnn(X_train, y_train, num_classes, epochs=100, batch_size=64)
+    model = Conformer_ECAPA_TDNN(input_dim=22, num_classes=num_classes, conformer_layers=3, dim=256).to(device)
+    model = train_model(model, X_train, y_train, epochs=100, batch_size=128)
 
     # 评估模型
     model.eval()
     with torch.no_grad():
-        X_test_tensor = torch.tensor(X_test, dtype=torch.float32).to(device).permute(0, 2, 1)
+        X_test_tensor = torch.tensor(X_test, dtype=torch.float32).to(device)
         outputs = model(X_test_tensor)
         y_pred = outputs.argmax(dim=1).cpu().numpy()
 
@@ -373,7 +439,7 @@ if __name__ == "__main__":
     print("\nCohen's Kappa:", cohen_kappa_score(y_test, y_pred))
     print("Matthews 相关系数 (MCC):", matthews_corrcoef(y_test, y_pred))
 
-    # 可视化归一化混淆矩阵
+    # 可视化混淆矩阵
     cm = confusion_matrix(y_test, y_pred)
     cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
     plt.figure(figsize=(12, 10))
