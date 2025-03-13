@@ -19,6 +19,11 @@ import librosa.display
 import math
 import matplotlib
 matplotlib.use('TkAgg')  # 强制使用Tkinter后端
+# 中文显示
+import matplotlib.font_manager as fm
+plt.rcParams['font.sans-serif'] = ['SimHei']
+plt.rcParams['axes.unicode_minus'] = False
+
 # =================================================================
 # 1. MFCC 特征提取
 # =================================================================
