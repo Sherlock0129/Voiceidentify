@@ -6,6 +6,8 @@ from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
+
+
 # =================================================================
 # 1. MFCC特征提取（按论文参数实现）
 # =================================================================
@@ -53,6 +55,7 @@ def normalize_features(features):
     # 除以最大值
     features /= np.max(np.abs(features), axis=0)
     return features
+
 # =================================================================
 # 2. 加载数据集并修复维度问题
 # =================================================================
@@ -103,6 +106,7 @@ def load_dataset(dataset_dir):
     le = LabelEncoder()
     y = le.fit_transform(y)
     return X, y, le
+
 # =================================================================
 # 3. 训练SVM模型（使用ERBF核）
 # =================================================================
@@ -136,7 +140,22 @@ if __name__ == "__main__":
     model = SVC(kernel="rbf", C=10, gamma="scale")
     model.fit(X_train, y_train)
 
-    # 评估
+    # 添加随机扰动
+    noise_level = 0.3  # 可以调整扰动的强度
+    X_test_noisy = X_test + noise_level * np.random.randn(*X_test.shape)
+
+    # 评估原始测试集
     y_pred = model.predict(X_test)
-    print("Accuracy:", accuracy_score(y_test, y_pred))
+    accuracy_original = accuracy_score(y_test, y_pred)
+    print("原始测试集 Accuracy:", accuracy_original)
     print(classification_report(y_test, y_pred))
+
+    # 评估添加扰动后的测试集
+    y_pred_noisy = model.predict(X_test_noisy)
+    accuracy_noisy = accuracy_score(y_test, y_pred_noisy)
+    print("添加扰动后测试集 Accuracy:", accuracy_noisy)
+    print(classification_report(y_test, y_pred_noisy))
+
+    # 计算鲁棒性
+    robustness = accuracy_original - accuracy_noisy
+    print(f"模型鲁棒性（准确率差值）: {robustness}")
