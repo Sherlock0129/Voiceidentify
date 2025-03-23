@@ -2,6 +2,7 @@ import os
 import time
 import json
 import librosa
+import matplotlib
 import numpy as np
 import torch
 import torch.nn as nn
@@ -11,14 +12,21 @@ from scipy.fftpack import dct
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, f1_score, confusion_matrix
-import matplotlib.pyplot as plt
+
 import seaborn as sns
 import math
 import pandas as pd
 from tqdm import tqdm
 import argparse
 import warnings
-
+from sklearn.metrics import roc_curve, accuracy_score, f1_score, classification_report, confusion_matrix
+import numpy as np
+from tqdm import tqdm
+import torch
+import matplotlib.pyplot as plt
+matplotlib.use("TkAgg")
+# 中文显示
+plt.rcParams['font.sans-serif'] = ['SimHei']
 warnings.filterwarnings("ignore")
 
 # 检查是否有可用的 GPU
@@ -400,11 +408,12 @@ class ECAPA_TDNN_Base(nn.Module):
 
         x = torch.cat((mu, sg), 1)
         x = self.bn5(x)
+        embedding = x  # 提取嵌入向量
         x = self.fc6(x)
         x = self.bn6(x)
-        x = self.fc_out(x)
+        logits = self.fc_out(x)
 
-        return x
+        return logits, embedding  # 返回 logits 和 embedding
 
 
 class ECAPA_TDNN_NoSE(nn.Module):
@@ -459,11 +468,12 @@ class ECAPA_TDNN_NoSE(nn.Module):
 
         x = torch.cat((mu, sg), 1)
         x = self.bn5(x)
+        embedding = x  # 提取嵌入向量
         x = self.fc6(x)
         x = self.bn6(x)
-        x = self.fc_out(x)
+        logits = self.fc_out(x)
 
-        return x
+        return logits, embedding  # 返回 logits 和 embedding
 
 
 class ECAPA_TDNN_NoDilation(nn.Module):
@@ -518,11 +528,12 @@ class ECAPA_TDNN_NoDilation(nn.Module):
 
         x = torch.cat((mu, sg), 1)
         x = self.bn5(x)
+        embedding = x  # 提取嵌入向量
         x = self.fc6(x)
         x = self.bn6(x)
-        x = self.fc_out(x)
+        logits = self.fc_out(x)
 
-        return x
+        return logits, embedding  # 返回 logits 和 embedding
 
 
 class ECAPA_TDNN_NoRes2Net(nn.Module):
@@ -549,6 +560,7 @@ class ECAPA_TDNN_NoRes2Net(nn.Module):
             nn.Softmax(dim=2),
         )
         self.bn5 = nn.BatchNorm1d(3072)
+
         self.fc6 = nn.Linear(3072, 192)
         self.bn6 = nn.BatchNorm1d(192)
         self.fc_out = nn.Linear(192, n_class)
@@ -591,11 +603,12 @@ class ECAPA_TDNN_NoRes2Net(nn.Module):
 
         x = torch.cat((mu, sg), 1)
         x = self.bn5(x)
+        embedding = x  # 提取嵌入向量
         x = self.fc6(x)
         x = self.bn6(x)
-        x = self.fc_out(x)
+        logits = self.fc_out(x)
 
-        return x
+        return logits, embedding  # 返回 logits 和 embedding
 
 
 class ECAPA_TDNN_NoAttentionPooling(nn.Module):
@@ -633,11 +646,12 @@ class ECAPA_TDNN_NoAttentionPooling(nn.Module):
         x = torch.cat((mu, sg), 1)
 
         x = self.bn5(x)
+        embedding = x  # 提取嵌入向量
         x = self.fc6(x)
         x = self.bn6(x)
-        x = self.fc_out(x)
+        logits = self.fc_out(x)
 
-        return x
+        return logits, embedding  # 返回 logits 和 embedding
 
 
 class ECAPA_TDNN_SmallC(nn.Module):
@@ -692,11 +706,12 @@ class ECAPA_TDNN_SmallC(nn.Module):
 
         x = torch.cat((mu, sg), 1)
         x = self.bn5(x)
+        embedding = x  # 提取嵌入向量
         x = self.fc6(x)
         x = self.bn6(x)
-        x = self.fc_out(x)
+        logits = self.fc_out(x)
 
-        return x
+        return logits, embedding  # 返回 logits 和 embedding
 
 
 class ECAPA_TDNN_SmallScale(nn.Module):
@@ -751,16 +766,25 @@ class ECAPA_TDNN_SmallScale(nn.Module):
 
         x = torch.cat((mu, sg), 1)
         x = self.bn5(x)
+        embedding = x  # 提取嵌入向量
         x = self.fc6(x)
         x = self.bn6(x)
-        x = self.fc_out(x)
+        logits = self.fc_out(x)
 
-        return x
+        return logits, embedding  # 返回 logits 和 embedding
 
 
 # =================================================================
 # 5. 训练、评估和可视化函数
 # =================================================================
+
+def compute_eer(scores, labels):
+    """计算 EER"""
+    fpr, tpr, thresholds = roc_curve(labels, scores, pos_label=1)
+    fnr = 1 - tpr
+    eer = fpr[np.nanargmin(np.abs(fnr - fpr))]
+    return eer
+
 def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, epochs, device, model_name="base"):
     """训练模型并记录性能
 
@@ -796,15 +820,15 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
 
             optimizer.zero_grad()
 
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
+            logits, _ = model(inputs)  # Extract logits
+            loss = criterion(logits, labels)
 
             loss.backward()
             optimizer.step()
 
             train_loss += loss.item() * inputs.size(0)
 
-            _, preds = torch.max(outputs, 1)
+            _, preds = torch.max(logits, 1)
             train_corrects += torch.sum(preds == labels.data)
             train_total += labels.size(0)
 
@@ -823,12 +847,12 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
                 inputs = inputs.to(device).float().permute(0, 2, 1)  # [batch, n_features, time]
                 labels = labels.to(device)
 
-                outputs = model(inputs)
-                loss = criterion(outputs, labels)
+                logits, _ = model(inputs)
+                loss = criterion(logits, labels)
 
                 val_loss += loss.item() * inputs.size(0)
 
-                _, preds = torch.max(outputs, 1)
+                _, preds = torch.max(logits, 1)
                 val_corrects += torch.sum(preds == labels.data)
                 val_total += labels.size(0)
 
@@ -858,7 +882,6 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
 
     return history
 
-
 def evaluate_model(model, test_loader, criterion, device, le):
     """评估模型性能
 
@@ -870,26 +893,28 @@ def evaluate_model(model, test_loader, criterion, device, le):
         le: 标签编码器
 
     返回:
-        结果字典，包含各项指标
+        结果字典，包含各项指标（包括 EER）
     """
     model.eval()
     test_loss = 0.0
     all_preds = []
     all_labels = []
+    all_embeddings = []
 
     with torch.no_grad():
         for inputs, labels in tqdm(test_loader, desc="Evaluating"):
             inputs = inputs.to(device).float().permute(0, 2, 1)
             labels = labels.to(device)
 
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
+            logits, embeddings = model(inputs)  # 获取 logits 和 embedding
+            loss = criterion(logits, labels)
 
             test_loss += loss.item() * inputs.size(0)
 
-            _, preds = torch.max(outputs, 1)
+            _, preds = torch.max(logits, 1)
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
+            all_embeddings.append(embeddings.cpu().numpy())
 
     # 计算平均损失
     test_loss = test_loss / len(test_loader.dataset)
@@ -907,6 +932,44 @@ def evaluate_model(model, test_loader, criterion, device, le):
     # 混淆矩阵
     cm = confusion_matrix(all_labels, all_preds)
 
+    # 计算 EER
+    embeddings = np.concatenate(all_embeddings, axis=0)  # 合并所有嵌入
+    unique_speakers = np.unique(all_labels)
+    scores = []
+    labels_eer = []
+
+    # 模拟说话人验证：每个说话人第一个样本为注册样本，其余为测试样本
+    for speaker in unique_speakers:
+        speaker_indices = [i for i, lbl in enumerate(all_labels) if lbl == speaker]
+        if len(speaker_indices) < 2:
+            continue  # 跳过只有一个样本的说话人
+        enroll_idx = speaker_indices[0]  # 注册样本
+        test_indices = speaker_indices[1:]  # 测试样本
+
+        enroll_embedding = embeddings[enroll_idx]
+        # 正样本对
+        for test_idx in test_indices:
+            test_embedding = embeddings[test_idx]
+            score = np.dot(enroll_embedding, test_embedding) / (
+                np.linalg.norm(enroll_embedding) * np.linalg.norm(test_embedding)
+            )  # 余弦相似度
+            scores.append(score)
+            labels_eer.append(1)  # 正样本
+
+        # 负样本对：与其他说话人的注册样本比较
+        other_speakers = [s for s in unique_speakers if s != speaker]
+        for other in other_speakers[:5]:  # 限制负样本数量以减少计算开销
+            other_indices = [i for i, lbl in enumerate(all_labels) if lbl == other]
+            if other_indices:
+                other_embedding = embeddings[other_indices[0]]
+                score = np.dot(enroll_embedding, other_embedding) / (
+                    np.linalg.norm(enroll_embedding) * np.linalg.norm(other_embedding)
+                )
+                scores.append(score)
+                labels_eer.append(0)  # 负样本
+
+    eer = compute_eer(scores, labels_eer) if scores else 0.0
+
     return {
         'test_loss': test_loss,
         'accuracy': accuracy,
@@ -915,8 +978,67 @@ def evaluate_model(model, test_loader, criterion, device, le):
         'report': report,
         'confusion_matrix': cm,
         'predictions': all_preds,
-        'labels': all_labels
+        'labels': all_labels,
+        'eer': eer
     }
+# def evaluate_model(model, test_loader, criterion, device, le):
+#     """评估模型性能
+#
+#     参数:
+#         model: 待评估模型
+#         test_loader: 测试数据加载器
+#         criterion: 损失函数
+#         device: 设备
+#         le: 标签编码器
+#
+#     返回:
+#         结果字典，包含各项指标
+#     """
+#     model.eval()
+#     test_loss = 0.0
+#     all_preds = []
+#     all_labels = []
+#
+#     with torch.no_grad():
+#         for inputs, labels in tqdm(test_loader, desc="Evaluating"):
+#             inputs = inputs.to(device).float().permute(0, 2, 1)
+#             labels = labels.to(device)
+#
+#             outputs = model(inputs)
+#             loss = criterion(outputs, labels)
+#
+#             test_loss += loss.item() * inputs.size(0)
+#
+#             _, preds = torch.max(outputs, 1)
+#             all_preds.extend(preds.cpu().numpy())
+#             all_labels.extend(labels.cpu().numpy())
+#
+#     # 计算平均损失
+#     test_loss = test_loss / len(test_loader.dataset)
+#
+#     # 计算准确率
+#     accuracy = accuracy_score(all_labels, all_preds)
+#
+#     # 计算F1分数
+#     f1_macro = f1_score(all_labels, all_preds, average='macro')
+#     f1_weighted = f1_score(all_labels, all_preds, average='weighted')
+#
+#     # 生成分类报告
+#     report = classification_report(all_labels, all_preds, target_names=le.classes_, output_dict=True)
+#
+#     # 混淆矩阵
+#     cm = confusion_matrix(all_labels, all_preds)
+#
+#     return {
+#         'test_loss': test_loss,
+#         'accuracy': accuracy,
+#         'f1_macro': f1_macro,
+#         'f1_weighted': f1_weighted,
+#         'report': report,
+#         'confusion_matrix': cm,
+#         'predictions': all_preds,
+#         'labels': all_labels
+#     }
 
 
 def visualize_training_history(histories, names):
@@ -986,6 +1108,7 @@ def visualize_model_comparison(results, names):
     ax.bar(x - width, accuracies, width, label='准确率')
     ax.bar(x, f1_macros, width, label='F1 (宏平均)')
     ax.bar(x + width, f1_weighteds, width, label='F1 (加权平均)')
+    ax.bar(x + 2 * width, [1 - result['eer'] for result in results], width, label='准确率 (1-EER)')
 
     ax.set_ylabel('分数')
     ax.set_title('模型性能比较')
@@ -1005,7 +1128,8 @@ def visualize_model_comparison(results, names):
             'Accuracy': f"{accuracies[i]:.4f}",
             'F1 (Macro)': f"{f1_macros[i]:.4f}",
             'F1 (Weighted)': f"{f1_weighteds[i]:.4f}",
-            'Test Loss': f"{results[i]['test_loss']:.4f}"
+            'Test Loss': f"{results[i]['test_loss']:.4f}",
+            'EER': f"{results[i]['eer']:.4f}"
         })
 
     df = pd.DataFrame(comparison_data)
@@ -1128,7 +1252,7 @@ def main(args):
         print(f"准确率: {result['accuracy']:.4f}")
         print(f"F1分数 (宏平均): {result['f1_macro']:.4f}")
         print(f"F1分数 (加权平均): {result['f1_weighted']:.4f}")
-
+        print(f"EER: {result['eer']:.4f}")
         # 保存结果
         histories.append(history)
         results.append(result)
@@ -1162,7 +1286,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ECAPA-TDNN模型消融实验")
 
     # 数据集参数
-    parser.add_argument('--dataset_dir', type=str, default="./LibriSpeech/dev-clean", help="数据集目录")
+    parser.add_argument('--dataset_dir', type=str, default="./dev-clean/LibriSpeech/dev-clean", help="数据集目录")
     parser.add_argument('--feature_type', type=str, default="mfcc", choices=['mfcc', 'melspectrogram'], help="特征类型")
     parser.add_argument('--max_frames', type=int, default=200, help="最大帧数(用于填充或截断)")
     parser.add_argument('--n_mfcc', type=int, default=22, help="MFCC系数数量")
@@ -1173,8 +1297,8 @@ if __name__ == "__main__":
     parser.add_argument('--models', type=str, default="all", help="要训练的模型(逗号分隔)或'all'")
 
     # 训练参数
-    parser.add_argument('--batch_size', type=int, default=32, help="批量大小")
-    parser.add_argument('--epochs', type=int, default=50, help="训练轮数")
+    parser.add_argument('--batch_size', type=int, default=64, help="批量大小")
+    parser.add_argument('--epochs', type=int, default=10, help="训练轮数")
     parser.add_argument('--lr', type=float, default=0.001, help="学习率")
     parser.add_argument('--weight_decay', type=float, default=1e-4, help="权重衰减")
     parser.add_argument('--lr_step', type=int, default=10, help="学习率调整步长")
