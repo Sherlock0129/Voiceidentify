@@ -1053,33 +1053,33 @@ def visualize_training_history(histories, names):
     # 绘制训练损失
     for history, name in zip(histories, names):
         axs[0, 0].plot(history['train_loss'], label=name)
-    axs[0, 0].set_title('训练损失')
-    axs[0, 0].set_xlabel('轮次')
-    axs[0, 0].set_ylabel('损失')
+    axs[0, 0].set_title('train_loss')
+    axs[0, 0].set_xlabel('Epoch')
+    axs[0, 0].set_ylabel('loss')
     axs[0, 0].legend()
 
     # 绘制验证损失
     for history, name in zip(histories, names):
         axs[0, 1].plot(history['val_loss'], label=name)
-    axs[0, 1].set_title('验证损失')
-    axs[0, 1].set_xlabel('轮次')
-    axs[0, 1].set_ylabel('损失')
+    axs[0, 1].set_title('val_loss')
+    axs[0, 1].set_xlabel('Epoch')
+    axs[0, 1].set_ylabel('loss')
     axs[0, 1].legend()
 
     # 绘制训练准确率
     for history, name in zip(histories, names):
         axs[1, 0].plot(history['train_acc'], label=name)
-    axs[1, 0].set_title('训练准确率')
-    axs[1, 0].set_xlabel('轮次')
-    axs[1, 0].set_ylabel('准确率')
+    axs[1, 0].set_title('train_acc')
+    axs[1, 0].set_xlabel('Epoch')
+    axs[1, 0].set_ylabel('accuracy')
     axs[1, 0].legend()
 
     # 绘制验证准确率
     for history, name in zip(histories, names):
         axs[1, 1].plot(history['val_acc'], label=name)
-    axs[1, 1].set_title('验证准确率')
-    axs[1, 1].set_xlabel('轮次')
-    axs[1, 1].set_ylabel('准确率')
+    axs[1, 1].set_title('val_acc')
+    axs[1, 1].set_xlabel('Epoch')
+    axs[1, 1].set_ylabel('accuracy')
     axs[1, 1].legend()
 
     plt.tight_layout()
@@ -1105,13 +1105,13 @@ def visualize_model_comparison(results, names):
     x = np.arange(len(names))
     width = 0.25
 
-    ax.bar(x - width, accuracies, width, label='准确率')
-    ax.bar(x, f1_macros, width, label='F1 (宏平均)')
-    ax.bar(x + width, f1_weighteds, width, label='F1 (加权平均)')
-    ax.bar(x + 2 * width, [1 - result['eer'] for result in results], width, label='准确率 (1-EER)')
+    ax.bar(x - width, accuracies, width, label='accuracy')
+    ax.bar(x, f1_macros, width, label='F1 (macro)')
+    ax.bar(x + width, f1_weighteds, width, label='F1 (weighted)')
+    ax.bar(x + 2 * width, [1 - result['eer'] for result in results], width, label='accuracy (1-EER)')
 
-    ax.set_ylabel('分数')
-    ax.set_title('模型性能比较')
+    ax.set_ylabel('score')
+    ax.set_title('model_comparison')
     ax.set_xticks(x)
     ax.set_xticklabels(names)
     ax.legend()
