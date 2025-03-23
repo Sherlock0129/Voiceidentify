@@ -1049,38 +1049,43 @@ def visualize_training_history(histories, names):
         names: 模型名称列表
     """
     fig, axs = plt.subplots(2, 2, figsize=(15, 10))
+    colors = ['r', 'g', 'b', 'c','m', 'y', 'k']  # 定义颜色列表
 
     # 绘制训练损失
-    for history, name in zip(histories, names):
-        axs[0, 0].plot(history['train_loss'], label=name)
-    axs[0, 0].set_title('train_loss')
-    axs[0, 0].set_xlabel('Epoch')
-    axs[0, 0].set_ylabel('loss')
-    axs[0, 0].legend()
+    for i, (history, name) in enumerate(zip(histories, names)):
+        axs[0, 0].plot(history['train_loss'], label=name, color=colors[i % len(colors)], linestyle='-', linewidth=2)
+    axs[0, 0].set_title('Training Loss', fontsize=16)
+    axs[0, 0].set_xlabel('Epoch', fontsize=14)
+    axs[0, 0].set_ylabel('Loss', fontsize=14)
+    axs[0, 0].tick_params(axis='both', which='major', labelsize=12)
+    axs[0, 0].legend(fontsize=12)
 
     # 绘制验证损失
-    for history, name in zip(histories, names):
-        axs[0, 1].plot(history['val_loss'], label=name)
-    axs[0, 1].set_title('val_loss')
-    axs[0, 1].set_xlabel('Epoch')
-    axs[0, 1].set_ylabel('loss')
-    axs[0, 1].legend()
+    for i, (history, name) in enumerate(zip(histories, names)):
+        axs[0, 1].plot(history['val_loss'], label=name, color=colors[i % len(colors)], linestyle='--', linewidth=2)
+    axs[0, 1].set_title('Validation Loss', fontsize=16)
+    axs[0, 1].set_xlabel('Epoch', fontsize=14)
+    axs[0, 1].set_ylabel('Loss', fontsize=14)
+    axs[0, 1].tick_params(axis='both', which='major', labelsize=12)
+    axs[0, 1].legend(fontsize=12)
 
     # 绘制训练准确率
-    for history, name in zip(histories, names):
-        axs[1, 0].plot(history['train_acc'], label=name)
-    axs[1, 0].set_title('train_acc')
-    axs[1, 0].set_xlabel('Epoch')
-    axs[1, 0].set_ylabel('accuracy')
-    axs[1, 0].legend()
+    for i, (history, name) in enumerate(zip(histories, names)):
+        axs[1, 0].plot(history['train_acc'], label=name, color=colors[i % len(colors)], linestyle='-.', linewidth=2)
+    axs[1, 0].set_title('Training Accuracy', fontsize=16)
+    axs[1, 0].set_xlabel('Epoch', fontsize=14)
+    axs[1, 0].set_ylabel('Accuracy', fontsize=14)
+    axs[1, 0].tick_params(axis='both', which='major', labelsize=12)
+    axs[1, 0].legend(fontsize=12)
 
     # 绘制验证准确率
-    for history, name in zip(histories, names):
-        axs[1, 1].plot(history['val_acc'], label=name)
-    axs[1, 1].set_title('val_acc')
-    axs[1, 1].set_xlabel('Epoch')
-    axs[1, 1].set_ylabel('accuracy')
-    axs[1, 1].legend()
+    for i, (history, name) in enumerate(zip(histories, names)):
+        axs[1, 1].plot(history['val_acc'], label=name, color=colors[i % len(colors)], linestyle=':', linewidth=2)
+    axs[1, 1].set_title('Validation Accuracy', fontsize=16)
+    axs[1, 1].set_xlabel('Epoch', fontsize=14)
+    axs[1, 1].set_ylabel('Accuracy', fontsize=14)
+    axs[1, 1].tick_params(axis='both', which='major', labelsize=12)
+    axs[1, 1].legend(fontsize=12)
 
     plt.tight_layout()
     plt.savefig('training_history_comparison.png')
@@ -1098,23 +1103,26 @@ def visualize_model_comparison(results, names):
     accuracies = [result['accuracy'] for result in results]
     f1_macros = [result['f1_macro'] for result in results]
     f1_weighteds = [result['f1_weighted'] for result in results]
+    eers = [result['eer'] for result in results]
 
     # 创建条形图
     fig, ax = plt.subplots(figsize=(12, 6))
+    colors = ['r', 'g', 'b', 'c','m', 'y', 'k']  # 定义颜色列表
 
     x = np.arange(len(names))
-    width = 0.25
+    width = 0.2
 
-    ax.bar(x - width, accuracies, width, label='accuracy')
-    ax.bar(x, f1_macros, width, label='F1 (macro)')
-    ax.bar(x + width, f1_weighteds, width, label='F1 (weighted)')
-    ax.bar(x + 2 * width, [1 - result['eer'] for result in results], width, label='accuracy (1-EER)')
+    ax.bar(x - 1.5 * width, accuracies, width, label='Accuracy', color=colors[0])
+    ax.bar(x - 0.5 * width, f1_macros, width, label='F1 (Macro)', color=colors[1])
+    ax.bar(x + 0.5 * width, f1_weighteds, width, label='F1 (Weighted)', color=colors[2])
+    ax.bar(x + 1.5 * width, [1 - eer for eer in eers], width, label='Accuracy (1-EER)', color=colors[3])
 
-    ax.set_ylabel('score')
-    ax.set_title('model_comparison')
+    ax.set_ylabel('Score', fontsize=14)
+    ax.set_title('Model Performance Comparison', fontsize=16)
     ax.set_xticks(x)
-    ax.set_xticklabels(names)
-    ax.legend()
+    ax.set_xticklabels(names, fontsize=12)
+    ax.tick_params(axis='both', which='major', labelsize=12)
+    ax.legend(fontsize=12)
 
     plt.tight_layout()
     plt.savefig('model_comparison.png')
@@ -1133,12 +1141,11 @@ def visualize_model_comparison(results, names):
         })
 
     df = pd.DataFrame(comparison_data)
-    print("模型性能比较:")
+    print("Model Performance Comparison:")
     print(df.to_string(index=False))
 
     # 保存比较结果到CSV
     df.to_csv('model_comparison.csv', index=False)
-
 
 # =================================================================
 # 6. 主函数 - 运行消融实验
