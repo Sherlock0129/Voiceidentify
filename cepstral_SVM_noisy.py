@@ -14,8 +14,16 @@ from sklearn.metrics import accuracy_score, classification_report
 # =================================================================
 # 1. 修复MFCC提取和归一化
 # =================================================================
-def extract_mfcc_manual(audio_path, n_mfcc=22, frame_length=25, frame_shift=10, n_fft=512, n_mels=40):
-    """提取MFCC并展平为1D特征向量"""
+def extract_cepstral_coefficients(audio_path, n_ceps=13, frame_length=25, frame_shift=10, n_fft=512):
+    """
+    提取倒谱系数并展平为1D特征向量
+    :param audio_path: 音频文件路径
+    :param n_ceps: 倒谱系数的数量
+    :param frame_length: 帧长度（毫秒）
+    :param frame_shift: 帧移（毫秒）
+    :param n_fft: FFT点数
+    :return: 倒谱系数特征向量 (n_ceps,)
+    """
     y, sr = librosa.load(audio_path, sr=8000)
 
     # 预加重
@@ -29,17 +37,18 @@ def extract_mfcc_manual(audio_path, n_mfcc=22, frame_length=25, frame_shift=10, 
     frames = frames.copy()
     frames *= np.hamming(frame_length_samples).reshape(-1, 1)
 
-    # 傅里叶变换和Mel滤波器组
+    # 傅里叶变换和功率谱
     mag_spec = np.abs(np.fft.rfft(frames, n=n_fft, axis=0))
-    mel_basis = librosa.filters.mel(sr=sr, n_fft=n_fft, n_mels=n_mels)
-    mel_energy = np.dot(mel_basis, mag_spec)
+    power_spec = mag_spec ** 2
 
-    # 对数能量和DCT
-    log_mel_energy = np.log(mel_energy + 1e-6)
-    mfcc = dct(log_mel_energy, axis=0, norm='ortho')[:n_mfcc]
+    # 对数变换
+    log_power_spec = np.log(power_spec + 1e-6)
+
+    # 计算倒谱系数
+    ceps = np.fft.irfft(log_power_spec, axis=0)[:n_ceps]
 
     # 展平为1D向量（时间轴取均值）
-    return np.mean(mfcc, axis=1)  # 形状变为 (n_mfcc,)
+    return np.mean(ceps, axis=1)  # 形状变为 (n_ceps,)
 
 # =================================================================
 # 2. 特征归一化（按论文方法）
@@ -86,9 +95,9 @@ def load_dataset(dataset_dir):
 
                 flac_path = os.path.join(scene_dir, file)
                 try:
-                    mfcc = extract_mfcc_manual(flac_path)
-                    if mfcc is not None:
-                        X.append(mfcc)
+                    ceps = extract_cepstral_coefficients(flac_path)
+                    if ceps is not None:
+                        X.append(ceps)
                         y.append(speaker)
                         print(f"    成功加载: {file}")
                     else:
@@ -147,13 +156,13 @@ if __name__ == "__main__":
     # 评估原始测试集
     y_pred = model.predict(X_test)
     accuracy_original = accuracy_score(y_test, y_pred)
-    print("mfcc_svm_原始测试集 Accuracy:", accuracy_original)
+    print("cepstral_SVM_原始测试集 Accuracy:", accuracy_original)
     print(classification_report(y_test, y_pred))
 
     # 评估添加扰动后的测试集
     y_pred_noisy = model.predict(X_test_noisy)
     accuracy_noisy = accuracy_score(y_test, y_pred_noisy)
-    print("mfcc_svm_添加扰动后测试集 Accuracy:", accuracy_noisy)
+    print("cepstral_SVM_添加扰动后测试集 Accuracy:", accuracy_noisy)
     print(classification_report(y_test, y_pred_noisy))
 
     # 计算鲁棒性

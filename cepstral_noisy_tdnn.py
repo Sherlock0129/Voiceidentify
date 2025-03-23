@@ -27,35 +27,48 @@ plt.rcParams['axes.unicode_minus'] = False
 # =================================================================
 # 1. MFCC 特征提取
 # =================================================================
-def extract_mfcc_manual(audio_path, n_mfcc=22, frame_length=25, frame_shift=10, n_fft=512, n_mels=40, return_full_mfcc=False):
-    """提取 MFCC 特征，可选择返回完整矩阵或平均向量"""
+def extract_cepstral_coefficients(audio_path, n_ceps=13, frame_length=25, frame_shift=10, n_fft=512,
+                                  return_full_ceps=False):
+    """提取倒谱系数，可选择返回完整矩阵或平均向量"""
     y, sr = librosa.load(audio_path, sr=8000)
+
+    # 预加重
     pre_emphasis = 0.97
     y = np.append(y[0], y[1:] - pre_emphasis * y[:-1])
+
+    # 分帧
     frame_length_samples = int(sr * frame_length / 1000)
     frame_shift_samples = int(sr * frame_shift / 1000)
     frames = librosa.util.frame(y, frame_length=frame_length_samples, hop_length=frame_shift_samples)
     frames = frames.copy()
+
+    # 加窗
     frames *= np.hamming(frame_length_samples).reshape(-1, 1)
+
+    # 计算功率谱
     mag_spec = np.abs(np.fft.rfft(frames, n=n_fft, axis=0))
-    mel_basis = librosa.filters.mel(sr=sr, n_fft=n_fft, n_mels=n_mels)
-    mel_energy = np.dot(mel_basis, mag_spec)
-    log_mel_energy = np.log(mel_energy + 1e-6)
-    mfcc = dct(log_mel_energy, axis=0, norm='ortho')[:n_mfcc]
-    if return_full_mfcc:
-        return mfcc.T  # 返回形状 (时间帧数, n_mfcc)
-    return np.mean(mfcc, axis=1)
+    power_spec = mag_spec ** 2
+
+    # 对数变换
+    log_power_spec = np.log(power_spec + 1e-6)
+
+    # 计算倒谱系数
+    ceps = np.fft.irfft(log_power_spec, axis=0)[:n_ceps]
+
+    if return_full_ceps:
+        return ceps.T  # 返回形状 (时间帧数, n_ceps)
+    return np.mean(ceps, axis=1)
 
 # MFCC 可视化
-def visualize_mfcc(audio_path):
-    """可视化音频文件的 MFCC 特征"""
-    mfcc_full = extract_mfcc_manual(audio_path, return_full_mfcc=True)
+def visualize_cepstral_coefficients(audio_path):
+    """可视化音频文件的倒谱系数"""
+    ceps_full = extract_cepstral_coefficients(audio_path, return_full_ceps=True)
     plt.figure(figsize=(12, 4))
-    librosa.display.specshow(mfcc_full.T, x_axis='time', sr=8000, hop_length=int(8000 * 10 / 1000), cmap='viridis')
+    librosa.display.specshow(ceps_full.T, x_axis='time', sr=8000, hop_length=int(8000 * 10 / 1000), cmap='viridis')
     plt.colorbar(format='%+2.0f dB')
-    plt.title('MFCC Heatmap', fontsize=14)
+    plt.title('Cepstral Coefficients Heatmap', fontsize=14)
     plt.xlabel('Time', fontsize=12)
-    plt.ylabel('MFCC Coefficients', fontsize=12)
+    plt.ylabel('Cepstral Coefficients', fontsize=12)
     plt.tight_layout()
     plt.show()
 
@@ -116,7 +129,7 @@ def visualize_feature_distribution(X_before, X_after, feature_idx=0):
 # 3. 加载数据集并进行填充
 # =================================================================
 def load_dataset(dataset_dir, max_frames=200):
-    """加载数据集并提取完整 MFCC 特征，填充或截断至 max_frames"""
+    """加载数据集并提取完整倒谱系数，填充或截断至 max_frames"""
     X, y = [], []
     for speaker in os.listdir(dataset_dir):
         speaker_dir = os.path.join(dataset_dir, speaker)
@@ -136,16 +149,16 @@ def load_dataset(dataset_dir, max_frames=200):
                     continue
                 flac_path = os.path.join(scene_dir, file)
                 try:
-                    # 提取完整 MFCC 矩阵
-                    mfcc = extract_mfcc_manual(flac_path, return_full_mfcc=True)
-                    if mfcc is not None:
+                    # 提取完整倒谱系数矩阵
+                    ceps = extract_cepstral_coefficients(flac_path, return_full_ceps=True)
+                    if ceps is not None:
                         # 填充或截断至 max_frames
-                        if mfcc.shape[0] < max_frames:
-                            pad_width = max_frames - mfcc.shape[0]
-                            mfcc = np.pad(mfcc, ((0, pad_width), (0, 0)), mode='constant')
+                        if ceps.shape[0] < max_frames:
+                            pad_width = max_frames - ceps.shape[0]
+                            ceps = np.pad(ceps, ((0, pad_width), (0, 0)), mode='constant')
                         else:
-                            mfcc = mfcc[:max_frames, :]
-                        X.append(mfcc)
+                            ceps = ceps[:max_frames, :]
+                        X.append(ceps)
                         y.append(speaker)
                         print(f"    已加载: {file}")
                     else:
@@ -154,7 +167,7 @@ def load_dataset(dataset_dir, max_frames=200):
                     print(f"    加载失败: {file}, 错误: {e}")
     if len(X) == 0:
         raise ValueError("未找到有效数据！请检查数据集路径、FLAC 格式和目录结构。")
-    X = np.array(X)  # 现在 X 的形状应为 (样本数, max_frames, n_mfcc)
+    X = np.array(X)  # 现在 X 的形状应为 (样本数, max_frames, n_ceps)
     le = LabelEncoder()
     y = le.fit_transform(y)
     return X, y, le
@@ -227,7 +240,8 @@ class Bottle2neck(nn.Module):
 class ECAPA_TDNN(nn.Module):
     def __init__(self, C=1024, n_class=40):  # 根据数据集调整 n_class
         super(ECAPA_TDNN, self).__init__()
-        self.conv1 = nn.Conv1d(22, C, kernel_size=5, stride=1, padding=2)  # 输入通道数 = n_mfcc
+        self.conv1 = nn.Conv1d(13, C, kernel_size=5, stride=1, padding=2)  # 输入通道数 = n_ceps
+        # 其他层保持不变
         self.relu = nn.ReLU()
         self.bn1 = nn.BatchNorm1d(C)
         self.layer1 = Bottle2neck(C, C, kernel_size=3, dilation=2, scale=8)
@@ -331,6 +345,86 @@ def visualize_per_class_accuracy(y_test, y_pred, le):
     plt.tight_layout()
     plt.show()
 
+
+
+def add_awgn_noise(signal, snr_db=10):
+    """
+    向信号中加入高斯白噪声
+    :param signal: 原始信号 (numpy array, 形状为 (时间帧数, 特征数))
+    :param snr_db: 信噪比 (dB)
+    :return: 加噪后的信号
+    """
+    signal_power = np.mean(signal ** 2)
+    noise_power = signal_power / (10 ** (snr_db / 10))
+    # 生成与 signal 形状相同的噪声
+    noise = np.random.randn(*signal.shape) * np.sqrt(noise_power)
+    return signal + noise
+
+def add_reverb(signal, sr, delay=0.1, decay=0.5):
+    """
+    向信号中加入混响
+    :param signal: 原始信号 (numpy array, 形状为 (时间帧数, 特征数))
+    :param sr: 采样率
+    :param delay: 延迟时间 (秒)
+    :param decay: 衰减因子
+    :return: 加入混响后的信号
+    """
+    impulse_response = np.zeros(int(sr * delay)+1)
+    impulse_response[0] = 1
+    impulse_response[int(sr * delay)] = decay
+    # 对每个特征通道分别加入混响
+    signal_reverbed = np.zeros_like(signal)
+    for i in range(signal.shape[1]):
+        signal_reverbed[:, i] = np.convolve(signal[:, i], impulse_response, mode='same')
+    return signal_reverbed
+
+def random_dropout(signal, dropout_prob=0.1):
+    """
+    随机丢弃部分信号
+    :param signal: 原始信号 (numpy array, 形状为 (时间帧数, 特征数))
+    :param dropout_prob: 丢弃概率
+    :return: 处理后的信号
+    """
+    mask = np.random.rand(*signal.shape) > dropout_prob
+    return signal * mask
+
+def volume_scale(signal, scale_factor=0.5):
+    """
+    对信号进行音量缩放
+    :param signal: 原始信号 (numpy array, 形状为 (时间帧数, 特征数))
+    :param scale_factor: 缩放因子 (>1 放大，<1 缩小)
+    :return: 缩放后的信号
+    """
+    return signal * scale_factor
+
+
+def add_combined_perturbations(signal, sr, snr_db=10, delay=0.1, decay=0.5, dropout_prob=0.1, scale_factor=0.5):
+    """
+    向信号中加入多种扰动
+    :param signal: 原始信号 (numpy array, 形状为 (时间帧数, 特征数))
+    :param sr: 采样率
+    :param snr_db: 信噪比 (dB)
+    :param delay: 混响延迟时间 (秒)
+    :param decay: 混响衰减因子
+    :param dropout_prob: 随机丢弃概率
+    :param scale_factor: 音量缩放因子
+    :return: 扰动后的信号
+    """
+    # 加入高斯白噪声
+    signal = add_awgn_noise(signal, snr_db=snr_db)
+
+    # 加入混响
+    signal = add_reverb(signal, sr=sr, delay=delay, decay=decay)
+
+    # 随机丢失
+    signal = random_dropout(signal, dropout_prob=dropout_prob)
+
+    # 音量缩放
+    signal = volume_scale(signal, scale_factor=scale_factor)
+
+    return signal
+
+
 # =================================================================
 # 6. 主流程与可视化
 # =================================================================
@@ -348,7 +442,7 @@ if __name__ == "__main__":
                                      os.listdir(os.path.join(dataset_dir, os.listdir(dataset_dir)[0],
                                                              os.listdir(os.path.join(dataset_dir, os.listdir(dataset_dir)[0]))[0]))[0])
     visualize_mel_spectrogram(sample_audio_path)
-    visualize_mfcc(sample_audio_path)
+    visualize_cepstral_coefficients(sample_audio_path)
 
     # 逐样本归一化特征
     X_normalized = np.array([normalize_features(x) for x in X])
@@ -359,13 +453,13 @@ if __name__ == "__main__":
     # 划分数据集
     X_train, X_test, y_train, y_test = train_test_split(X_normalized, y, test_size=0.05, stratify=y)
 
+    # 添加随机扰动
+    noise_level = 0.3  # 可以调整扰动的强度
+    X_test_noisy = X_test + noise_level * np.random.randn(*X_test.shape)
+
     # 训练 ECAPA-TDNN
     num_classes = len(np.unique(y))
     model = train_ecapa_tdnn(X_train, y_train, num_classes, epochs=10, batch_size=32)
-
-    # 在评估模型部分添加随机扰动
-    noise_level = 0.3  # 可以调整扰动的强度
-    X_test_noisy = X_test + noise_level * np.random.randn(*X_test.shape)
 
     model.eval()
     with torch.no_grad():
@@ -374,7 +468,7 @@ if __name__ == "__main__":
         outputs = model(X_test_tensor)
         y_pred = outputs.argmax(dim=1).cpu().numpy()
 
-        print("mfcc_tdnn_原始测试集准确率:", accuracy_score(y_test, y_pred))
+        print("cepstral_tdnn_原始测试集准确率:", accuracy_score(y_test, y_pred))
         print("\n原始测试集分类报告:")
         report = classification_report(y_test, y_pred, target_names=le.classes_, output_dict=True)
         print(classification_report(y_test, y_pred, target_names=le.classes_))
@@ -388,7 +482,7 @@ if __name__ == "__main__":
         outputs_noisy = model(X_test_noisy_tensor)
         y_pred_noisy = outputs_noisy.argmax(dim=1).cpu().numpy()
 
-        print("\nmfcc_tdnn_添加扰动后测试集准确率:", accuracy_score(y_test, y_pred_noisy))
+        print("\ncepstral_tdnn_添加扰动后测试集准确率:", accuracy_score(y_test, y_pred_noisy))
         print("\n添加扰动后测试集分类报告:")
         report_noisy = classification_report(y_test, y_pred_noisy, target_names=le.classes_, output_dict=True)
         print(classification_report(y_test, y_pred_noisy, target_names=le.classes_))
@@ -401,33 +495,4 @@ if __name__ == "__main__":
         robustness_accuracy = accuracy_score(y_test, y_pred) - accuracy_score(y_test, y_pred_noisy)
         print(f"模型鲁棒性（准确率差值）: {robustness_accuracy}")
 
-
-
-    # # 可视化归一化混淆矩阵
-    # cm = confusion_matrix(y_test, y_pred)
-    # cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-    # plt.figure(figsize=(12, 10))
-    # sns.heatmap(cm_normalized, annot=True, fmt='.2f', cmap='Blues', xticklabels=le.classes_, yticklabels=le.classes_)
-    # plt.title('归一化混淆矩阵', fontsize=14)
-    # plt.xlabel('预测值', fontsize=12)
-    # plt.ylabel('真实值', fontsize=12)
-    # plt.tight_layout()
-    # plt.show()
-    #
-    # # 可视化前 N 个类别的 F1 分数
-    # f1_scores = {class_name: report[class_name]['f1-score'] for class_name in le.classes_}
-    # sorted_f1 = sorted(f1_scores.items(), key=lambda x: x[1], reverse=True)
-    # N = 10
-    # top_N = sorted_f1[:N]
-    # plt.figure(figsize=(12, 6))
-    # plt.bar([x[0] for x in top_N], [x[1] for x in top_N], color='skyblue')
-    # plt.title(f'前 {N} 个类别的 F1 分数', fontsize=14)
-    # plt.xlabel('类别', fontsize=12)
-    # plt.ylabel('F1 分数', fontsize=12)
-    # plt.xticks(rotation=45, ha='right')
-    # plt.tight_layout()
-    # plt.show()
-    #
-    # # 可视化每类准确率
-    # visualize_per_class_accuracy(y_test, y_pred, le)
-    visualize_per_class_accuracy(y_test, y_pred_noisy, le)
+        visualize_per_class_accuracy(y_test, y_pred_noisy, le)
