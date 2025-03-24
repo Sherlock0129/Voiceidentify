@@ -322,15 +322,31 @@ def visualize_per_class_accuracy(y_test, y_pred, le):
     sorted_indices = np.argsort(per_class_acc)[::-1]
     sorted_acc = per_class_acc[sorted_indices]
     sorted_names = class_names[sorted_indices]
+
     plt.figure(figsize=(12, 6))
-    plt.bar(sorted_names, sorted_acc, color='skyblue')
-    plt.title('每类准确率', fontsize=14)
-    plt.xlabel('类别', fontsize=12)
-    plt.ylabel('准确率', fontsize=12)
-    plt.xticks(rotation=45, ha='right')
+    # 设置颜色和边框
+    bars = plt.bar(sorted_names, sorted_acc, color='skyblue', edgecolor='black', linewidth=1.2)
+    plt.title('Accuracy of Each Class', fontsize=16, fontweight='bold')
+    plt.xlabel('Class', fontsize=14)
+    plt.ylabel('Accuracy', fontsize=14)
+    plt.xticks(rotation=45, ha='right', fontsize=12)
+    plt.yticks(fontsize=12)
+
+    # 添加水平网格线
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+
+    # 在每个柱子上标注准确率数值
+    for bar in bars:
+        height = bar.get_height()
+        plt.annotate(f'{height:.2f}',
+                     xy=(bar.get_x() + bar.get_width() / 2, height),
+                     xytext=(0, 3),  # 3 points vertical offset
+                     textcoords='offset points',
+                     ha='center', va='bottom',
+                     fontsize=12)
+
     plt.tight_layout()
     plt.show()
-
 # =================================================================
 # 6. 主流程与可视化
 # =================================================================
